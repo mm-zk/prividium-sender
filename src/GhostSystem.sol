@@ -1,3 +1,4 @@
+// src/GhostSystem.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
@@ -5,34 +6,41 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
-// --- 1. MOCK BRIDGE (Simulates L1 -> L2) ---
+// --- 1. MOCK BRIDGE ---
 contract MockBridge {
     event Bridged(address indexed l2Receiver, address token, uint256 amount);
-
     function deposit(address _l2Receiver, address _token, uint256 _amount) external payable {
         emit Bridged(_l2Receiver, _token, _amount);
     }
 }
 
-// --- 2. GHOST VAULT (The Twin Contract) ---
+// --- 2. GHOST VAULT ---
 contract GhostVault {
     using SafeERC20 for IERC20;
 
     address public immutable BRIDGE;
-    address public immutable OWNER; // The "Stealth Address" owner
+    address public immutable OWNER;
+    uint256 public immutable DESTINATION_CHAIN_ID; // <--- NEW
 
     error SignatureInvalid();
 
-    constructor(address _bridge, address _owner) {
+    constructor(address _bridge, address _owner, uint256 _destChainId) {
         BRIDGE = _bridge;
         OWNER = _owner;
+        DESTINATION_CHAIN_ID = _destChainId;
     }
 
     receive() external payable {}
 
-    // ROLE 1: PUBLIC FORWARDER (Called by Relayer)
+    // ROLE 1: PUBLIC FORWARDER
     function bridgeToL2(address _token) external {
-        address targetL2 = address(this); // Address is same on L2
+        // FIX: If we are already on the destination chain, do nothing.
+        // The funds should stay here waiting for Alice to sweep them.
+        if (block.chainid == DESTINATION_CHAIN_ID) {
+            return;
+        }
+
+        address targetL2 = address(this);
         
         if (_token == address(0)) {
             uint256 balance = address(this).balance;
@@ -48,8 +56,9 @@ contract GhostVault {
         }
     }
 
-    // ROLE 2: PRIVATE SWEEP (Called by Alice on L2)
+    // ROLE 2: PRIVATE SWEEP
     function sweep(address _token, address _recipient, bytes calldata _signature) external {
+        // Replay protection: include chainId in the hash
         bytes32 messageHash = keccak256(
             abi.encodePacked(
                 "\x19Ethereum Signed Message:\n32",
@@ -71,13 +80,13 @@ contract GhostVault {
 // --- 3. GHOST FACTORY ---
 contract GhostFactory {
     address public immutable BRIDGE;
+    uint256 public immutable DESTINATION_CHAIN_ID; // <--- NEW
 
-    // Emitted so Alice can find her contract. 
-    // `ephemeralPublicKey` is the "R" value she needs for ECDH.
     event GhostDeployed(address indexed vault, address indexed owner, bytes ephemeralPublicKey);
 
-    constructor(address _bridge) {
+    constructor(address _bridge, uint256 _destChainId) {
         BRIDGE = _bridge;
+        DESTINATION_CHAIN_ID = _destChainId;
     }
 
     function deployAndBridge(
@@ -86,26 +95,29 @@ contract GhostFactory {
         address _token, 
         bytes calldata _ephemeralPublicKey
     ) external payable {
-        // 1. Deploy (Idempotent)
         address vault = computeAddress(_salt, _owner);
+        
+        // 1. Deploy if needed
         if (vault.code.length == 0) {
-            new GhostVault{salt: _salt}(BRIDGE, _owner);
+            // Pass the ChainID to the vault constructor
+            new GhostVault{salt: _salt}(BRIDGE, _owner, DESTINATION_CHAIN_ID);
             emit GhostDeployed(vault, _owner, _ephemeralPublicKey);
         }
 
-        // 2. Forward ETH for gas (if any sent by relayer)
+        // 2. Forward Gas
         if (address(this).balance > 0) {
             payable(vault).transfer(address(this).balance);
         }
 
-        // 3. Bridge
+        // 3. Bridge (Will skip if we are on L2)
         GhostVault(payable(vault)).bridgeToL2(_token);
     }
 
     function computeAddress(bytes32 _salt, address _owner) public view returns (address) {
+        // Constructor args MUST include the DESTINATION_CHAIN_ID now
         bytes memory bytecode = abi.encodePacked(
             type(GhostVault).creationCode,
-            abi.encode(BRIDGE, _owner)
+            abi.encode(BRIDGE, _owner, DESTINATION_CHAIN_ID)
         );
         bytes32 hash = keccak256(
             abi.encodePacked(bytes1(0xff), address(this), _salt, keccak256(bytecode))

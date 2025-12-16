@@ -19,10 +19,13 @@ contract DeployScript is Script {
         MockBridge bridge = new MockBridge();
         console.log("MockBridge deployed at:", address(bridge));
 
-        // 3. Deploy Factory
-        GhostFactory factory = new GhostFactory(address(bridge));
+        
+        // 3. Deploy Factory (Targeting Localhost 31337 as the destination)
+        uint256 destChainId = 31337; 
+        GhostFactory factory = new GhostFactory(address(bridge), destChainId);
         console.log("GhostFactory deployed at:", address(factory));
 
+        
         // 4. Deploy Registry
         Registry registry = new Registry();
         console.log("Registry deployed at:", address(registry));

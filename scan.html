@@ -15,10 +15,6 @@
             color: #333;
         }
 
-        h2 {
-            color: #2c3e50;
-        }
-
         .card {
             background: white;
             padding: 25px;
@@ -34,14 +30,6 @@
             border-radius: 8px;
             box-sizing: border-box;
             margin-top: 5px;
-        }
-
-        label {
-            font-weight: 600;
-            color: #555;
-            display: block;
-            margin-top: 15px;
-            margin-bottom: 5px;
         }
 
         button {
@@ -70,32 +58,11 @@
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
         }
 
-        .fund-meta {
-            font-size: 0.85em;
-            color: #7f8c8d;
-            font-family: monospace;
-            word-break: break-all;
-        }
-
         .claim-btn {
             background: #27ae60;
             margin-top: 10px;
             width: auto;
             padding: 8px 15px;
-        }
-
-        .claim-btn:hover {
-            background: #219150;
-        }
-
-        .loading {
-            color: #e67e22;
-            font-weight: bold;
-        }
-
-        .empty {
-            color: #95a5a6;
-            font-style: italic;
         }
     </style>
 </head>
@@ -105,15 +72,13 @@
     <h2>🕵️‍♀️ Private Dashboard</h2>
 
     <div class="card">
-        <h3>1. Who are you?</h3>
-        <label>Enter your Registry Username</label>
+        <h3>1. Secure Login</h3>
+        <p style="color:#666">Enter your username and sign the message to regenerate your keys.</p>
+
         <input type="text" id="username" placeholder="e.g. alice">
 
-        <label>Enter your Spend Private Key (The one you saved locally)</label>
-        <input type="text" id="spendPriv" placeholder="0x...">
-
-        <button onclick="scanFunds()">Find My Funds</button>
-        <div id="scanStatus" style="margin-top:10px;"></div>
+        <button onclick="loginAndScan()">🔑 Login with MetaMask & Scan</button>
+        <div id="status" style="margin-top:10px;"></div>
     </div>
 
     <div id="resultsArea" style="display:none;">
@@ -122,53 +87,48 @@
     </div>
 
     <script>
-        // --- CONFIGURATION ---
-        const REGISTRY_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"; // <--- PASTE REGISTRY ADDRESS
-        const FACTORY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";  // <--- PASTE FACTORY ADDRESS
+        // CONFIG
+        const FACTORY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"; // <--- PASTE FACTORY
         const RPC_URL = "http://127.0.0.1:8545";
-        const LOCAL_CHAIN_ID_HEX = "0x7A69"; // 31337
+        const LOGIN_MESSAGE = "Sign this message to generate your Ghost Keys.\n\nIMPORTANT: Use the same wallet to login later.";
 
-        // Crypto Setup
         const ec = new elliptic.ec('secp256k1');
         const BN = ec.genKeyPair().getPrivate().constructor;
-        let provider;
+        let provider, signer;
 
-        async function scanFunds() {
+        async function loginAndScan() {
             const username = document.getElementById("username").value;
-            const spendPrivKey = document.getElementById("spendPriv").value;
-            const status = document.getElementById("scanStatus");
+            const status = document.getElementById("status");
             const fundsList = document.getElementById("fundsList");
-            const resultsArea = document.getElementById("resultsArea");
 
-            if (!username || !spendPrivKey) return alert("Please fill in all fields");
-
-            status.className = "loading";
-            status.innerText = "Fetching keys from Registry...";
-
-            provider = new ethers.JsonRpcProvider(RPC_URL);
+            if (!username) return alert("Enter username");
 
             try {
-                // 1. Get Scan Key from Registry
-                const registryAbi = ["function getScanPrivateKey(string) view returns (bytes32)"];
-                const registry = new ethers.Contract(REGISTRY_ADDRESS, registryAbi, provider);
+                // 1. Connect & Sign
+                if (!window.ethereum) throw new Error("No MetaMask");
+                provider = new ethers.BrowserProvider(window.ethereum);
+                signer = await provider.getSigner();
 
-                // In our demo, this returns the raw private key. In prod, this would be encrypted blob.
-                let scanPrivKey;
-                try {
-                    scanPrivKey = await registry.getScanPrivateKey(username);
-                } catch (e) {
-                    throw new Error("User not found or keys missing");
-                }
+                status.innerText = "Please sign the login request...";
+                const signature = await signer.signMessage(LOGIN_MESSAGE);
 
-                status.innerText = "Scanning Factory Events...";
+                // 2. RE-DERIVE KEYS (Deterministic)
+                // This recreates the exact private keys used at registration
+                status.innerText = "Regenerating Keys...";
 
-                // 2. Fetch Factory Events
+                const spendPrivHex = ethers.keccak256(signature);
+                const scanPrivHex = ethers.keccak256(ethers.solidityPacked(["bytes", "string"], [signature, "scan"]));
+
+                const spendKey = ec.keyFromPrivate(spendPrivHex.replace("0x", ""), 'hex');
+                const scanKey = ec.keyFromPrivate(scanPrivHex.replace("0x", ""), 'hex');
+
+                // 3. Scan Blockchain
+                status.innerText = "Scanning for funds...";
                 const factoryAbi = ["event GhostDeployed(address indexed vault, address indexed owner, bytes ephemeralPublicKey)"];
                 const factory = new ethers.Contract(FACTORY_ADDRESS, factoryAbi, provider);
 
                 const events = await factory.queryFilter(factory.filters.GhostDeployed(), 0);
 
-                // 3. Filter Events (The Math)
                 fundsList.innerHTML = "";
                 let foundCount = 0;
 
@@ -176,18 +136,16 @@
                     try {
                         const { vault, owner, ephemeralPublicKey } = e.args;
 
-                        // RECOVER LOGIC
-                        const scanKey = ec.keyFromPrivate(scanPrivKey.replace("0x", ""), 'hex');
-                        const ephemeralKey = ec.keyFromPublic(ephemeralPublicKey.replace("0x", ""), 'hex');
+                        // --- MATH: Check if this vault belongs to us ---
 
                         // S = a * R
+                        const ephemeralKey = ec.keyFromPublic(ephemeralPublicKey.replace("0x", ""), 'hex');
                         const sharedSecretPoint = ephemeralKey.getPublic().mul(scanKey.getPrivate());
                         const sharedSecret = sharedSecretPoint.encode('hex');
                         const sharedHash = ethers.keccak256("0x" + sharedSecret);
                         const sharedHashBN = new BN(sharedHash.slice(2), 16);
 
-                        // Check Owner
-                        const spendKey = ec.keyFromPrivate(spendPrivKey.replace("0x", ""), 'hex');
+                        // Check: (Hash(S) * G) + B == Owner?
                         const offsetPoint = ec.g.mul(sharedHashBN);
                         const expectedOwnerPoint = offsetPoint.add(spendKey.getPublic());
                         const expectedOwnerHex = expectedOwnerPoint.encode('hex', false);
@@ -205,16 +163,12 @@
                     } catch (err) { console.error(err); }
                 }
 
-                resultsArea.style.display = "block";
+                document.getElementById("resultsArea").style.display = "block";
                 status.innerText = "";
-
-                if (foundCount === 0) {
-                    fundsList.innerHTML = "<div class='empty'>No pending transfers found.</div>";
-                }
+                if (foundCount === 0) fundsList.innerHTML = "No funds found.";
 
             } catch (err) {
                 console.error(err);
-                status.style.color = "red";
                 status.innerText = "Error: " + err.message;
             }
         }
@@ -224,67 +178,41 @@
             div.className = "fund-item";
             div.innerHTML = `
                 <div style="font-weight:bold; color:#2c3e50;">💰 Unclaimed Assets</div>
-                <div class="fund-meta">
-                    Vault: ${vault}<br>
-                    Ghost Owner: ${owner}
-                </div>
-                <button class="claim-btn" onclick="claimFunds('${vault}', '${ghostKey}')">Claim (Sweep to Wallet)</button>
+                <div style="font-size:0.85em; color:#666;">Vault: ${vault}</div>
+                <button class="claim-btn" onclick="claimFunds('${vault}', '${ghostKey}')">Claim Funds</button>
             `;
             document.getElementById("fundsList").appendChild(div);
         }
 
-        // --- CLAIM LOGIC ---
         async function claimFunds(vaultAddr, ghostPrivKey) {
             try {
-                if (!window.ethereum) return alert("Please install MetaMask");
-
-                // 1. Connect Wallet
-                await window.ethereum.request({ method: 'eth_requestAccounts' });
-                await switchNetwork(); // Ensure we are on local chain
-
-                const browserProvider = new ethers.BrowserProvider(window.ethereum);
-                const signer = await browserProvider.getSigner();
                 const myAddress = await signer.getAddress();
-
-                // 2. Sign Authorization with Ghost Key
                 const ghostWallet = new ethers.Wallet(ghostPrivKey);
-                const network = await browserProvider.getNetwork();
+                const network = await provider.getNetwork();
 
+                // 1. Sign Sweep Authorization
                 const types = ["uint256", "address", "address", "address"];
                 const values = [network.chainId, vaultAddr, ethers.ZeroAddress, myAddress];
                 const messageHash = ethers.solidityPackedKeccak256(types, values);
+
                 const signature = await ghostWallet.signMessage(ethers.getBytes(messageHash));
 
-                // 3. Submit Transaction via MetaMask (Alice pays gas)
+                // 2. Send Tx
                 const vaultAbi = ["function sweep(address, address, bytes)"];
                 const vault = new ethers.Contract(vaultAddr, vaultAbi, signer);
 
-                alert("Please confirm the transaction in MetaMask...");
+                alert("Please confirm transaction in MetaMask...");
                 const tx = await vault.sweep(ethers.ZeroAddress, myAddress, signature);
 
                 alert("Sweeping... " + tx.hash);
                 await tx.wait();
-                alert("Success! Funds moved to " + myAddress);
+                alert("Funds swept successfully!");
 
-                // Refresh list
-                document.getElementById("fundsList").innerHTML = "Refreshing...";
-                scanFunds();
+                // Refresh
+                loginAndScan();
 
             } catch (err) {
                 alert("Claim failed: " + err.message);
-                console.error(err);
-            }
-        }
-
-        async function switchNetwork() {
-            try {
-                await window.ethereum.request({
-                    method: 'wallet_switchEthereumChain',
-                    params: [{ chainId: LOCAL_CHAIN_ID_HEX }],
-                });
-            } catch (err) {
-                // If chain missing, you'd add it here (omitted for brevity since register.html covers it)
-                alert("Please switch MetaMask to Localhost 8545");
             }
         }
     </script>

@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>Ghost Registry</title>
+    <title>Ghost Registry (Deterministic)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
     <style>
@@ -21,25 +21,13 @@
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
         }
 
-        h2 {
-            margin-top: 0;
-            color: #333;
-        }
-
-        label {
-            font-weight: 600;
-            color: #555;
-            display: block;
-            margin-bottom: 5px;
-            margin-top: 15px;
-        }
-
         input {
             width: 100%;
             padding: 12px;
             border: 1px solid #ddd;
             border-radius: 8px;
             box-sizing: border-box;
+            margin-top: 10px;
         }
 
         button {
@@ -52,23 +40,17 @@
             font-size: 16px;
             cursor: pointer;
             margin-top: 20px;
-            transition: opacity 0.2s;
         }
 
         button:hover {
             opacity: 0.8;
         }
 
-        .keys-display {
-            font-family: monospace;
-            font-size: 0.85em;
-            background: #eee;
-            padding: 10px;
-            border-radius: 6px;
-            word-break: break-all;
-            color: #555;
-            display: none;
-            margin-top: 15px;
+        .info {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 10px;
+            line-height: 1.4;
         }
     </style>
 </head>
@@ -76,122 +58,83 @@
 <body>
 
     <div class="card">
-        <h2>📝 Register Name</h2>
-        <p>Claim your username and publish your stealth keys on-chain.</p>
+        <h2>📝 Register with Wallet</h2>
+        <p class="info">
+            We will derive your stealth keys from your wallet signature.
+            <br>No need to save any files.
+        </p>
 
         <label>Choose Username</label>
-        <input type="text" id="username" placeholder="e.g. satoshi">
+        <input type="text" id="username" placeholder="e.g. alice">
 
-        <button id="btnConnect" onclick="registerUser()">Connect Wallet & Register</button>
+        <button onclick="registerUser()">Sign & Register</button>
 
         <div id="status" style="margin-top:15px; color:blue; display:none;"></div>
-
-        <div id="keyLog" class="keys-display"></div>
     </div>
 
     <script>
-        // --- CONFIGURATION ---
-        const REGISTRY_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"; // <--- PASTE YOUR DEPLOYED REGISTRY ADDRESS HERE
-
-        const LOCAL_CHAIN_ID_HEX = "0x7A69"; // 31337 in Hex
-        const LOCAL_RPC_URL = "http://127.0.0.1:8545";
+        // CONFIG
+        const REGISTRY_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"; // <--- PASTE REGISTRY ADDRESS
+        const LOGIN_MESSAGE = "Sign this message to generate your Ghost Keys.\n\nIMPORTANT: Use the same wallet to login later.";
 
         const ec = new elliptic.ec('secp256k1');
 
         async function registerUser() {
             const name = document.getElementById("username").value;
             const status = document.getElementById("status");
-            const keyLog = document.getElementById("keyLog");
 
             if (!name) return alert("Enter a name");
 
             status.style.display = "block";
-            status.innerText = "Initializing...";
+            status.innerText = "Connecting...";
 
             try {
                 if (!window.ethereum) throw new Error("No Metamask found");
 
-                // 1. Switch Network logic
-                await switchNetwork();
-
-                // 2. Generate Keys locally
-                status.innerText = "Generating Stealth Keys...";
-                const scanKey = ec.genKeyPair();
-                const spendKey = ec.genKeyPair();
-
-                const scanPriv = "0x" + scanKey.getPrivate('hex');
-                const scanPub = "0x" + scanKey.getPublic(false, 'hex'); // Uncompressed
-                const spendPub = "0x" + spendKey.getPublic(false, 'hex'); // Uncompressed
-                const spendPriv = "0x" + spendKey.getPrivate('hex');
-
-                keyLog.style.display = "block";
-                keyLog.innerHTML = `
-                    <strong>GENERATED LOCAL KEYS:</strong><br>
-                    <span style="color:red">SAVE THIS (Spend Private):</span> ${spendPriv}<br><br>
-                    Scan Public: ${scanPub.substring(0, 20)}...<br>
-                    Spend Public: ${spendPub.substring(0, 20)}...
-                `;
-
-                // 3. Connect Metamask
-                status.innerText = "Connecting Wallet...";
                 const provider = new ethers.BrowserProvider(window.ethereum);
                 const signer = await provider.getSigner();
 
-                status.innerText = "Please sign transaction in MetaMask...";
+                // 1. SIGNATURE DERIVATION
+                status.innerText = "Please sign the login message...";
+                const signature = await signer.signMessage(LOGIN_MESSAGE);
 
-                // 4. Call Contract
-                const abi = [
-                    "function register(string, bytes, bytes, bytes32)"
-                ];
+                status.innerText = "Deriving Keys...";
+
+                // 2. Derive Private Keys from Signature Hash
+                // Spend Key = Keccak(Signature)
+                const spendPrivHex = ethers.keccak256(signature);
+
+                // Scan Key = Keccak(Signature + "scan") -> Just to make it different
+                const scanPrivHex = ethers.keccak256(ethers.solidityPacked(["bytes", "string"], [signature, "scan"]));
+
+                // 3. Generate Public Keys
+                const spendKey = ec.keyFromPrivate(spendPrivHex.replace("0x", ""), 'hex');
+                const scanKey = ec.keyFromPrivate(scanPrivHex.replace("0x", ""), 'hex');
+
+                const spendPub = "0x" + spendKey.getPublic(false, 'hex');
+                const scanPub = "0x" + scanKey.getPublic(false, 'hex');
+
+                // 4. Register on Contract
+                // We store a dummy value for the "encrypted private key" since we derive it now
+                const dummyEncryptedKey = ethers.ZeroHash;
+
+                status.innerText = "Registering on Blockchain...";
+
+                const abi = ["function register(string, bytes, bytes, bytes32)"];
                 const contract = new ethers.Contract(REGISTRY_ADDRESS, abi, signer);
 
-                const tx = await contract.register(name, scanPub, spendPub, scanPriv);
+                const tx = await contract.register(name, scanPub, spendPub, dummyEncryptedKey);
 
                 status.innerText = "Transaction sent: " + tx.hash;
                 await tx.wait();
 
-                status.innerText = "✅ Registration Complete! You are now in the Registry.";
+                status.innerText = "✅ Success! You are registered.";
                 status.style.color = "green";
 
             } catch (err) {
                 console.error(err);
                 status.innerText = "Error: " + err.message;
                 status.style.color = "red";
-            }
-        }
-
-        async function switchNetwork() {
-            try {
-                // Try to switch to the local chain
-                await window.ethereum.request({
-                    method: 'wallet_switchEthereumChain',
-                    params: [{ chainId: LOCAL_CHAIN_ID_HEX }],
-                });
-            } catch (switchError) {
-                // This error code means the chain has not been added to MetaMask.
-                if (switchError.code === 4902) {
-                    try {
-                        await window.ethereum.request({
-                            method: 'wallet_addEthereumChain',
-                            params: [
-                                {
-                                    chainId: LOCAL_CHAIN_ID_HEX,
-                                    chainName: 'Local Anvil',
-                                    rpcUrls: [LOCAL_RPC_URL],
-                                    nativeCurrency: {
-                                        name: 'ETH',
-                                        symbol: 'ETH',
-                                        decimals: 18
-                                    }
-                                },
-                            ],
-                        });
-                    } catch (addError) {
-                        throw new Error("Failed to add local network: " + addError.message);
-                    }
-                } else {
-                    throw new Error("Failed to switch network: " + switchError.message);
-                }
             }
         }
     </script>
