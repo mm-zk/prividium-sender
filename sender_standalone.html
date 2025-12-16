@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Ghost Address Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            padding: 40px;
+            max-width: 700px;
+            margin: auto;
+            background: #f9f9f9;
+            color: #333;
+        }
+
+        h2 {
+            color: #444;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            margin-bottom: 20px;
+        }
+
+        label {
+            font-weight: bold;
+            font-size: 0.9em;
+            color: #666;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1em;
+            width: 100%;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        .result-box {
+            background: #eef2f5;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: monospace;
+            word-break: break-all;
+            margin-top: 10px;
+            border-left: 4px solid #007bff;
+            display: none;
+        }
+
+        .key-value {
+            margin-bottom: 10px;
+        }
+
+        .key-value span {
+            font-weight: bold;
+            color: #0056b3;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>👻 Ghost Address Generator</h2>
+    <p style="color:#666; font-size: 0.9em;">
+        Generate a unique, private destination address for a user.
+        <br>No wallet connection required.
+    </p>
+
+    <div class="card">
+        <label>Recipient Username (from registry.json)</label>
+        <input type="text" id="username" value="alice" placeholder="e.g. alice">
+
+        <button onclick="generateAddress()">Generate Stealth Address</button>
+    </div>
+
+    <div id="output" class="result-box">
+        <h3 style="margin-top:0; font-size:1.1em;">🚀 Target Generated</h3>
+
+        <div class="key-value">
+            <span>SEND FUNDS TO (Ghost Address):</span><br>
+            <div id="res-address">...</div>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #ddd;">
+
+        <div style="font-size: 0.85em; color: #555;">
+            <p><strong>Next Steps for Relayer:</strong></p>
+            <div class="key-value">
+                <span>Salt:</span><br>
+                <div id="res-salt">...</div>
+            </div>
+            <div class="key-value">
+                <span>Owner (Ghost Key):</span><br>
+                <div id="res-owner">...</div>
+            </div>
+            <div class="key-value">
+                <span>Ephemeral Public Key (The Clue):</span><br>
+                <div id="res-ephemeral">...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        const FACTORY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+        const RPC_URL = "http://127.0.0.1:8545";
+
+        // --- CRYPTO SETUP ---
+        const ec = new elliptic.ec('secp256k1');
+
+        // --- THE FIX ---
+        // Instead of loading external libraries, we extract the BN constructor 
+        // from a dummy key. This guarantees version compatibility.
+        const BN = ec.genKeyPair().getPrivate().constructor;
+
+        async function generateAddress() {
+            const username = document.getElementById("username").value;
+            const outputDiv = document.getElementById("output");
+
+            try {
+                // 1. Fetch Registry
+                const registry = await fetch('registry.json').then(r => r.json());
+                const userKeys = registry[username];
+
+                if (!userKeys) {
+                    alert("User '" + username + "' not found in registry.json");
+                    return;
+                }
+
+                const provider = new ethers.JsonRpcProvider(RPC_URL);
+
+                // 2. Crypto Logic
+
+                // A. Ephemeral Key (r)
+                const ephemeralKey = ec.genKeyPair();
+                const ephemeralPubKeyHex = ephemeralKey.getPublic(true, 'hex');
+
+                // B. Shared Secret (S = r * A)
+                const aliceScanKey = ec.keyFromPublic(userKeys.scanPublicKey, 'hex');
+                const sharedSecretPoint = aliceScanKey.getPublic().mul(ephemeralKey.getPrivate());
+                const sharedSecret = sharedSecretPoint.encode('hex');
+
+                // C. Hash the Shared Secret
+                const sharedHash = ethers.keccak256("0x" + sharedSecret);
+
+                // D. Convert Hash to BN (Using the extracted constructor)
+                const sharedHashBN = new BN(sharedHash.slice(2), 16);
+
+                // E. Ghost Owner (Pub = Hash(S)*G + B)
+                const aliceSpendKey = ec.keyFromPublic(userKeys.spendPublicKey, 'hex');
+                const offsetPoint = ec.g.mul(sharedHashBN);
+                const ghostPublicPoint = offsetPoint.add(aliceSpendKey.getPublic());
+
+                // Get Uncompressed Hex (safe for Ethers)
+                const ghostPubKeyHex = ghostPublicPoint.encode('hex');
+
+                // F. Compute Address (Now this will work!)
+                const ghostOwnerAddress = ethers.computeAddress("0x" + ghostPubKeyHex);
+
+                // G. Salt
+                const salt = ethers.keccak256(ghostOwnerAddress);
+
+                // 3. Contract Call
+                const factoryAbi = ["function computeAddress(bytes32, address) view returns (address)"];
+                const factory = new ethers.Contract(FACTORY_ADDRESS, factoryAbi, provider);
+
+                const computedAddress = await factory.computeAddress(salt, ghostOwnerAddress);
+
+                // 4. Output
+                document.getElementById("res-address").innerText = computedAddress;
+                document.getElementById("res-salt").innerText = salt;
+                document.getElementById("res-owner").innerText = ghostOwnerAddress;
+                document.getElementById("res-ephemeral").innerText = "0x" + ephemeralPubKeyHex;
+
+                outputDiv.style.display = "block";
+
+            } catch (err) {
+                console.error(err);
+                alert("Error: " + err.message);
+            }
+        }
+    </script>
+</body>
+
+</html>

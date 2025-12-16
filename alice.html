@@ -2,16 +2,64 @@
 <html lang="en">
 
 <head>
-    <title>Alice's Vault</title>
+    <title>Alice's Vault (Fixed)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
     <style>
         body {
-            font-family: sans-serif;
-            padding: 20px;
-            max-width: 600px;
+            font-family: 'Segoe UI', sans-serif;
+            padding: 40px;
+            max-width: 700px;
             margin: auto;
             background: #f0f8ff;
+            color: #333;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            margin-bottom: 20px;
+        }
+
+        label {
+            font-weight: bold;
+            font-size: 0.9em;
+            color: #666;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        .success-box {
+            border: 1px solid #28a745;
+            padding: 15px;
+            margin-top: 10px;
+            background: #e8f5e9;
+            border-radius: 8px;
         }
     </style>
 </head>
@@ -19,141 +67,135 @@
 <body>
     <h2>👩 Alice's Private Vault</h2>
 
-    <div style="background: white; padding: 15px; border-radius: 8px;">
-        <label>Scan Private Key (a):</label><br>
-        <input type="text" id="scanPriv" value="0x1111111111111111111111111111111111111111111111111111111111111111"
-            style="width:100%"><br><br>
+    <div class="card">
+        <label>Scan Private Key (a)</label>
+        <input type="text" id="scanPriv" placeholder="0x..." value="">
 
-        <label>Spend Private Key (b):</label><br>
-        <input type="text" id="spendPriv" value="0x2222222222222222222222222222222222222222222222222222222222222222"
-            style="width:100%">
+        <label>Spend Private Key (b)</label>
+        <input type="text" id="spendPriv" placeholder="0x..." value="">
 
-        <br><br>
         <button onclick="scanForFunds()">Scan Blockchain for Funds</button>
     </div>
 
-    <h3>Found Ghost Accounts:</h3>
     <div id="results"></div>
 
     <script>
-        const FACTORY_ADDRESS = "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9";
-        const ec = new elliptic.ec('secp256k1');
-        let provider, signer;
+        // CONFIG
+        const FACTORY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+        const RPC_URL = "http://127.0.0.1:8545";
 
-        async function init() {
-            if (window.ethereum) {
-                provider = new ethers.BrowserProvider(window.ethereum);
-                signer = await provider.getSigner();
-            }
-        }
+        const ec = new elliptic.ec('secp256k1');
+        const BN = ec.genKeyPair().getPrivate().constructor; // Safe BN extraction
+
+        let provider;
 
         async function scanForFunds() {
-            await init();
-            const scanPrivKey = document.getElementById("scanPriv").value;
-            const spendPrivKey = document.getElementById("spendPriv").value;
+            const scanPrivKey = document.getElementById("scanPriv").value.trim();
+            const spendPrivKey = document.getElementById("spendPriv").value.trim();
             const resultsDiv = document.getElementById("results");
-            resultsDiv.innerHTML = "Scanning...";
 
-            // 1. Get All 'GhostDeployed' Events
-            const factoryAbi = [
-                "event GhostDeployed(address indexed vault, address indexed owner, bytes ephemeralPublicKey)",
-                "function computeAddress(bytes32, address) view returns (address)"
-            ];
+            if (!scanPrivKey || !spendPrivKey) return alert("Please enter both private keys");
+
+            resultsDiv.innerHTML = "Scanning...";
+            provider = new ethers.JsonRpcProvider(RPC_URL);
+
+            // 1. Fetch Events
+            const factoryAbi = ["event GhostDeployed(address indexed vault, address indexed owner, bytes ephemeralPublicKey)"];
             const factory = new ethers.Contract(FACTORY_ADDRESS, factoryAbi, provider);
 
-            // Get logs from block 0
-            const filter = factory.filters.GhostDeployed();
-            const events = await factory.queryFilter(filter, 0);
+            // In a real app, you'd scan from a specific block. Here we scan from 0.
+            const events = await factory.queryFilter(factory.filters.GhostDeployed(), 0);
 
             resultsDiv.innerHTML = "";
-            let found = 0;
+            let foundCount = 0;
 
-            // 2. Iterate and Try to Decrypt
+            // 2. Iterate and check ownership
             for (let e of events) {
-                const { vault, owner, ephemeralPublicKey } = e.args;
-
                 try {
-                    // --- RECOVERY LOGIC ---
+                    const { vault, owner, ephemeralPublicKey } = e.args;
 
-                    // A. Recreate Shared Secret (S = a * R)
+                    // --- RECOVERY LOGIC ---
                     const scanKey = ec.keyFromPrivate(scanPrivKey.replace("0x", ""), 'hex');
                     const ephemeralKey = ec.keyFromPublic(ephemeralPublicKey.replace("0x", ""), 'hex');
 
+                    // S = a * R
                     const sharedSecretPoint = ephemeralKey.getPublic().mul(scanKey.getPrivate());
                     const sharedSecret = sharedSecretPoint.encode('hex');
                     const sharedHash = ethers.keccak256("0x" + sharedSecret);
+                    const sharedHashBN = new BN(sharedHash.slice(2), 16);
 
-                    // B. Calculate Expected Owner PubKey (Hash(S)*G + B)
+                    // Check: (Hash(S) * G) + B == Owner?
                     const spendKey = ec.keyFromPrivate(spendPrivKey.replace("0x", ""), 'hex');
-                    const sharedHashBN = new ethers.BN(sharedHash.slice(2), 16);
-
                     const offsetPoint = ec.g.mul(sharedHashBN);
                     const expectedOwnerPoint = offsetPoint.add(spendKey.getPublic());
-                    const expectedOwnerHex = expectedOwnerPoint.encode('hex');
+                    const expectedOwnerHex = expectedOwnerPoint.encode('hex', false); // Uncompressed
                     const expectedOwnerAddr = ethers.computeAddress("0x" + expectedOwnerHex);
 
-                    // C. Match?
                     if (expectedOwnerAddr.toLowerCase() === owner.toLowerCase()) {
-                        found++;
+                        foundCount++;
 
-                        // D. Recover Private Key (k = Hash(S) + b)
+                        // RECOVER GHOST PRIVATE KEY
+                        // k = Hash(S) + b
                         const ghostPrivBN = sharedHashBN.add(spendKey.getPrivate()).umod(ec.n);
                         const ghostPrivateKey = "0x" + ghostPrivBN.toString(16, 64);
 
-                        // Render Result
-                        const el = document.createElement("div");
-                        el.style = "border:1px solid green; padding:10px; margin:5px; background:#e8f5e9";
-                        el.innerHTML = `
-                            <strong>💰 FUNDS FOUND!</strong><br>
-                            Vault: ${vault}<br>
-                            Ghost Owner: ${owner}<br>
-                            <em>We recovered the Private Key!</em><br>
-                            <button onclick="sweepFunds('${vault}', '${ghostPrivateKey}')">Sweep to My Wallet</button>
-                        `;
-                        resultsDiv.appendChild(el);
+                        renderFound(vault, owner, ghostPrivateKey);
                     }
                 } catch (err) {
-                    console.error("Math error on event", err);
+                    console.error("Skipping event", err);
                 }
             }
 
-            if (found === 0) resultsDiv.innerHTML = "No funds found belonging to you.";
+            if (foundCount === 0) resultsDiv.innerHTML = "<p>No funds found.</p>";
         }
 
-        window.sweepFunds = async (vaultAddr, ghostPrivKey) => {
-            // Assume we are on L2 now
-            // We use the Recovered Key to sign a message authorizing the sweep
+        function renderFound(vault, owner, ghostKey) {
+            const el = document.createElement("div");
+            el.className = "success-box";
+            el.innerHTML = `
+                <strong>💰 FUNDS FOUND!</strong><br>
+                <div style="font-size:0.9em; margin:10px 0;">
+                    Vault: <code>${vault}</code><br>
+                    Ghost Owner: <code>${owner}</code>
+                </div>
+                <button onclick="sweep('${vault}', '${ghostKey}')">Sweep to Alice Main</button>
+            `;
+            document.getElementById("results").appendChild(el);
+        }
 
-            const recipient = await signer.getAddress(); // Alice's Main Wallet
+        window.sweep = async (vaultAddr, ghostPrivKey) => {
+            // In simulation, we need a signer to PAY GAS for the sweep transaction.
+            // We'll grab the first account from the local node (Alice's Main Wallet).
+            const signer = await provider.getSigner(0);
+            const aliceMainAddress = await signer.getAddress();
+
             const vaultAbi = ["function sweep(address, address, bytes)"];
             const vault = new ethers.Contract(vaultAddr, vaultAbi, signer);
 
-            alert(`Signing sweep request with recovered key:\n${ghostPrivKey.substring(0, 10)}...`);
-
-            // 1. Sign Message with GHOST KEY (Not Metamask)
+            // 1. Sign Authorization Message with GHOST KEY
             const ghostWallet = new ethers.Wallet(ghostPrivKey);
-
-            // Construct the exact hash Solidity expects
             const network = await provider.getNetwork();
-            const chainId = network.chainId;
 
-            // Hash(chainId, vault, token, recipient)
+            // Hash matches Solidity logic: keccak256(chainId, vault, token, recipient)
             const types = ["uint256", "address", "address", "address"];
-            const values = [chainId, vaultAddr, ethers.ZeroAddress, recipient];
+            const values = [network.chainId, vaultAddr, ethers.ZeroAddress, aliceMainAddress];
             const messageHash = ethers.solidityPackedKeccak256(types, values);
             const messageBytes = ethers.getBytes(messageHash);
 
-            // Sign
             const signature = await ghostWallet.signMessage(messageBytes);
 
-            // 2. Submit Transaction (Alice pays gas with main wallet)
             try {
-                const tx = await vault.sweep(ethers.ZeroAddress, recipient, signature);
-                alert("Sweep Transaction Sent! " + tx.hash);
+                // 2. Submit transaction
+                const tx = await vault.sweep(ethers.ZeroAddress, aliceMainAddress, signature);
+                alert("Sweeping funds... " + tx.hash);
                 await tx.wait();
-                alert("Funds arrived in main wallet!");
+                alert(`Success! Funds moved to ${aliceMainAddress}`);
+
+                // Remove the box
+                document.getElementById("results").innerHTML = "<h3>Swept! 🧹</h3>";
             } catch (e) {
                 alert("Sweep failed: " + e.message);
+                console.error(e);
             }
         }
     </script>
