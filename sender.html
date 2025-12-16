@@ -2,147 +2,295 @@
 <html lang="en">
 
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ghost Sender</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
     <style>
+        :root {
+            --primary: #7c3aed;
+            --bg: #f5f3ff;
+            --text: #1f2937;
+            --card: #ffffff;
+        }
+
         body {
-            font-family: sans-serif;
-            padding: 20px;
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 40px 20px;
+        }
+
+        .container {
             max-width: 600px;
-            margin: auto;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 4px 15px rgba(124, 58, 237, 0.08);
+        }
+
+        h2 {
+            margin-top: 0;
+            color: #4c1d95;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .subtitle {
+            color: #6b7280;
+            font-size: 0.95rem;
+            margin-bottom: 24px;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            font-size: 0.875rem;
+            margin-bottom: 6px;
+            color: #374151;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 1rem;
+            box-sizing: border-box;
+            margin-bottom: 16px;
+        }
+
+        button {
+            width: 100%;
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        /* Step 2 Section */
+        .step-section {
+            display: none;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px dashed #e5e7eb;
+        }
+
+        .step-title {
+            font-weight: 700;
+            color: #6d28d9;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+        }
+
+        .data-preview {
+            background: #faf5ff;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            color: #6b7280;
+            font-family: monospace;
+            word-break: break-all;
+            margin-bottom: 20px;
+            border: 1px solid #e9d5ff;
+        }
+
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            display: none;
+        }
+
+        .status.success {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
         }
     </style>
 </head>
 
 <body>
-    <h2>👻 Send Assets Privately</h2>
 
-    <label>Recipient Name (from registry):</label>
-    <input type="text" id="username" value="alice" placeholder="e.g. alice">
+    <div class="container">
+        <div class="card">
+            <h2>👻 Ghost Sender</h2>
+            <p class="subtitle">
+                Send assets privately. The recipient (Alice) will be the only one who can claim them.
+            </p>
 
-    <label>Amount (ETH):</label>
-    <input type="number" id="amount" value="0.1">
+            <label>1. Recipient Username</label>
+            <input type="text" id="username" placeholder="e.g. alice">
+            <button onclick="generateAddress()">🔮 Generate Stealth Address</button>
 
-    <button onclick="sendFunds()">Generate Address & Send</button>
+            <div id="sendSection" class="step-section">
+                <div class="step-title">2. Send Assets</div>
 
-    <div id="logs" style="background: #f4f4f4; padding: 10px; margin-top: 20px; white-space: pre-wrap;"></div>
+                <div class="data-preview">
+                    <strong>Target Contract Address (The Vault):</strong><br>
+                    <span id="previewAddress" style="color:#7c3aed; font-weight:bold;">...</span>
+                    <br><br>
+                    <strong>Ghost Owner (Private Key Holder):</strong><br>
+                    <span id="previewOwner">...</span>
+                </div>
+
+                <label>Amount (ETH)</label>
+                <input type="number" id="amount" placeholder="0.1" step="0.01">
+
+                <button onclick="sendFunds()">🚀 Send via MetaMask</button>
+
+                <div id="txStatus" class="status"></div>
+            </div>
+
+        </div>
+    </div>
 
     <script>
-        // CONFIGURATION (Replace with real deployed addresses)
-        const FACTORY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
-        const BRIDGE_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
-        // NOTE: You must obtain the Bytecode Hash of GhostVault manually after compilation
-        // For this demo, we will rely on the Factory to verify the address, or 
-        // in a real app, you fetch the init code hash from a trusted API.
+        // CONFIG
+        const REGISTRY_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"; // <--- PASTE REGISTRY ADDRESS
+        const FACTORY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";  // <--- PASTE FACTORY ADDRESS
+        const RPC_URL = "http://127.0.0.1:8545";
 
         const ec = new elliptic.ec('secp256k1');
-        let provider, signer;
+        const BN = ec.genKeyPair().getPrivate().constructor;
 
-        async function init() {
-            if (window.ethereum) {
-                provider = new ethers.BrowserProvider(window.ethereum);
-                signer = await provider.getSigner();
-                log("Wallet connected: " + await signer.getAddress());
-            } else {
-                log("Please install MetaMask / Local Node");
+        let currentParams = null;
+
+        async function generateAddress() {
+            const username = document.getElementById("username").value;
+            const sendSection = document.getElementById("sendSection");
+
+            if (!username) return alert("Please enter a username");
+
+            try {
+                const provider = new ethers.JsonRpcProvider(RPC_URL);
+
+                // 1. Fetch Registry
+                const registryAbi = ["function getPublicKeys(string) view returns (bytes, bytes)"];
+                const registryContract = new ethers.Contract(REGISTRY_ADDRESS, registryAbi, provider);
+
+                let scanPub, spendPub;
+                try {
+                    [scanPub, spendPub] = await registryContract.getPublicKeys(username);
+                } catch (e) {
+                    return alert("User '" + username + "' not found on-chain.");
+                }
+
+                const userKeys = {
+                    scanPublicKey: scanPub.replace("0x", ""),
+                    spendPublicKey: spendPub.replace("0x", "")
+                };
+
+                // 2. Math (ECDH)
+                const ephemeralKey = ec.genKeyPair();
+
+                // S = r * A
+                const aliceScanKey = ec.keyFromPublic(userKeys.scanPublicKey, 'hex');
+                const sharedSecretPoint = aliceScanKey.getPublic().mul(ephemeralKey.getPrivate());
+                const sharedSecret = sharedSecretPoint.encode('hex');
+                const sharedHash = ethers.keccak256("0x" + sharedSecret);
+                const sharedHashBN = new BN(sharedHash.slice(2), 16);
+
+                // Ghost = (Hash(S) * G) + B
+                const aliceSpendKey = ec.keyFromPublic(userKeys.spendPublicKey, 'hex');
+                const offsetPoint = ec.g.mul(sharedHashBN);
+                const ghostPublicPoint = offsetPoint.add(aliceSpendKey.getPublic());
+
+                const ghostPubKeyHex = ghostPublicPoint.encode('hex');
+                const ghostOwnerAddress = ethers.computeAddress("0x" + ghostPubKeyHex);
+                const salt = ethers.keccak256(ghostOwnerAddress);
+
+                // 3. Compute Contract Address (The Vault)
+                const factoryAbi = ["function computeAddress(bytes32, address) view returns (address)"];
+                const factory = new ethers.Contract(FACTORY_ADDRESS, factoryAbi, provider);
+                const computedAddress = await factory.computeAddress(salt, ghostOwnerAddress);
+
+                // 4. Store Params
+                currentParams = {
+                    salt: salt,
+                    owner: ghostOwnerAddress,
+                    token: ethers.ZeroAddress, // ETH
+                    ephemeralKey: "0x" + ephemeralKey.getPublic(true, 'hex') // Compressed R
+                };
+
+                // 5. Update UI
+                // FIX: Show the COMPUTED address as the target, not the owner
+                document.getElementById("previewAddress").innerText = computedAddress;
+                document.getElementById("previewOwner").innerText = ghostOwnerAddress;
+
+                sendSection.style.display = "block";
+
+            } catch (err) {
+                console.error(err);
+                alert("Error: " + err.message);
             }
         }
 
         async function sendFunds() {
-            await init();
-            const username = document.getElementById("username").value;
             const amount = document.getElementById("amount").value;
+            const statusDiv = document.getElementById("txStatus");
 
-            // 1. Fetch Registry
-            const REGISTRY_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"; // Same address as in register.html
-            const registryAbi = ["function getPublicKeys(string) view returns (bytes, bytes)"];
-            const registryContract = new ethers.Contract(REGISTRY_ADDRESS, registryAbi, provider);
-
-            try {
-                const [scanPub, spendPub] = await registryContract.getPublicKeys(username);
-
-                // Format keys for your existing logic
-                userKeys = {
-                    scanPublicKey: scanPub.replace("0x", ""), // Remove 0x for elliptic
-                    spendPublicKey: spendPub.replace("0x", "")
-                };
-            } catch (e) {
-                alert("User not found on-chain!");
-                return;
-            }
-
-            log(`Found keys for ${username}... generating Stealth Address.`);
-            const BN = ec.genKeyPair().getPrivate().constructor;
-
-
-            // 2. CRYPTO MAGIC (Dual-Key Stealth Address)
-
-            // A. Generate Ephemeral Key (r)
-            const ephemeralKey = ec.genKeyPair();
-            const ephemeralPubKeyHex = ephemeralKey.getPublic(true, 'hex'); // Compressed
-
-            // B. Calculate Shared Secret (S = r * A)
-            const aliceScanKey = ec.keyFromPublic(userKeys.scanPublicKey, 'hex');
-            const sharedSecretPoint = aliceScanKey.getPublic().mul(ephemeralKey.getPrivate());
-            const sharedSecret = sharedSecretPoint.encode('hex');
-
-            // C. Hash Shared Secret (Hash(S))
-            const sharedHash = ethers.keccak256("0x" + sharedSecret);
-            const sharedHashBN = new BN(sharedHash.slice(2), 16); // Remove '0x'
-
-            // D. Calculate Ghost Owner (Pub = Hash(S)*G + B)
-            const aliceSpendKey = ec.keyFromPublic(userKeys.spendPublicKey, 'hex');
-            // Point addition: (G * sharedHash) + SpendPublic
-            const offsetPoint = ec.g.mul(sharedHashBN);
-            const ghostPublicPoint = offsetPoint.add(aliceSpendKey.getPublic());
-
-            const ghostPubKeyHex = ghostPublicPoint.encode('hex');
-
-            // Convert Public Key to Ethereum Address
-            const ghostOwnerAddress = ethers.computeAddress("0x" + ghostPubKeyHex);
-
-            // E. Generate Salt (Hash of Owner)
-            const salt = ethers.keccak256(ghostOwnerAddress);
-
-            log(`--- Stealth Data ---`);
-            log(`Shared Secret (Hidden): ${sharedSecret.substring(0, 10)}...`);
-            log(`Ghost Owner (Public): ${ghostOwnerAddress}`);
-            log(`Salt: ${salt}`);
-
-            // 3. Compute Counterfactual Address (On-chain check)
-            const factoryAbi = ["function computeAddress(bytes32, address) view returns (address)", "function deployAndBridge(bytes32, address, address, bytes) payable"];
-            const factory = new ethers.Contract(FACTORY_ADDRESS, factoryAbi, signer);
-
-            const computedAddress = await factory.computeAddress(salt, ghostOwnerAddress);
-            log(`Target Address (Computed): ${computedAddress}`);
-
-            // 4. THE ACTION: Send Funds + Trigger Relayer
-            // In reality, User sends to 'computedAddress', and Relayer calls 'deployAndBridge'.
-            // Here, we simulate the Relayer calling deployAndBridge carrying the value.
+            if (!currentParams) return alert("Please generate an address first.");
+            if (!amount || amount <= 0) return alert("Please enter a valid amount.");
 
             try {
-                log(`Sending ${amount} ETH and deploying forwarder...`);
+                if (!window.ethereum) throw new Error("MetaMask not found");
+
+                statusDiv.className = "status";
+                statusDiv.style.display = "block";
+                statusDiv.innerText = "Requesting signature...";
+
+                const provider = new ethers.BrowserProvider(window.ethereum);
+                const signer = await provider.getSigner();
+                const factoryAbi = ["function deployAndBridge(bytes32, address, address, bytes) payable"];
+                const factory = new ethers.Contract(FACTORY_ADDRESS, factoryAbi, signer);
+
+                statusDiv.innerText = "Sending transaction...";
 
                 const tx = await factory.deployAndBridge(
-                    salt,
-                    ghostOwnerAddress,
-                    ethers.ZeroAddress, // Token 0x0 = ETH
-                    "0x" + ephemeralPubKeyHex, // The Clue for Alice
+                    currentParams.salt,
+                    currentParams.owner,
+                    currentParams.token,
+                    currentParams.ephemeralKey,
                     { value: ethers.parseEther(amount) }
                 );
 
-                log(`Transaction Sent! Hash: ${tx.hash}`);
+                statusDiv.innerText = "Waiting for confirmation...";
                 await tx.wait();
-                log(`Success! Funds bridged to L2.`);
-            } catch (e) {
-                log(`Error: ${e.message}`);
-                console.error(e);
-            }
-        }
 
-        function log(msg) {
-            document.getElementById("logs").innerText += msg + "\n";
+                statusDiv.className = "status success";
+                statusDiv.innerHTML = `
+                    <strong>✅ Sent!</strong><br>
+                    Funds bridged to ghost address.<br>
+                    <small>Tx: ${tx.hash}</small>
+                `;
+
+            } catch (err) {
+                console.error(err);
+                statusDiv.className = "status error";
+                statusDiv.innerText = "Error: " + err.message;
+            }
         }
     </script>
 </body>

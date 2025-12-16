@@ -2,79 +2,145 @@
 <html lang="en">
 
 <head>
-    <title>Ghost Registry (Deterministic)</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost Registry</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
     <style>
+        :root {
+            --primary: #2563eb;
+            --bg: #f3f4f6;
+            --text: #1f2937;
+            --card: #ffffff;
+        }
+
         body {
-            font-family: 'Segoe UI', sans-serif;
-            padding: 40px;
-            max-width: 600px;
-            margin: auto;
-            background: #f4f7f6;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 40px 20px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
         }
 
         .card {
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            background: var(--card);
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        h2 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            color: #111827;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .subtitle {
+            color: #6b7280;
+            font-size: 0.95rem;
+            margin-bottom: 24px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            font-size: 0.875rem;
+            margin-bottom: 6px;
+            color: #374151;
         }
 
         input {
             width: 100%;
             padding: 12px;
-            border: 1px solid #ddd;
+            border: 1px solid #d1d5db;
             border-radius: 8px;
+            font-size: 1rem;
             box-sizing: border-box;
-            margin-top: 10px;
+            transition: border 0.2s;
+            margin-bottom: 16px;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
         }
 
         button {
-            background: #000;
+            width: 100%;
+            background: var(--primary);
             color: white;
             border: none;
-            padding: 15px;
-            width: 100%;
+            padding: 14px;
             border-radius: 8px;
-            font-size: 16px;
+            font-weight: 600;
             cursor: pointer;
-            margin-top: 20px;
+            transition: background 0.2s;
         }
 
         button:hover {
-            opacity: 0.8;
+            background: #1d4ed8;
         }
 
-        .info {
-            font-size: 0.9em;
-            color: #666;
-            margin-top: 10px;
-            line-height: 1.4;
+        .status {
+            margin-top: 20px;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            display: none;
+        }
+
+        .status.success {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+        }
+
+        .status.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        .status.loading {
+            background: #e0f2fe;
+            color: #075985;
+            border: 1px solid #bae6fd;
         }
     </style>
 </head>
 
 <body>
 
-    <div class="card">
-        <h2>📝 Register with Wallet</h2>
-        <p class="info">
-            We will derive your stealth keys from your wallet signature.
-            <br>No need to save any files.
-        </p>
+    <div class="container">
+        <div class="card">
+            <h2>📝 Prividium Registry</h2>
+            <p class="subtitle">
+                Create your stealth identity. We will derive your private keys from your wallet signature, so you don't
+                need to save anything.
+            </p>
 
-        <label>Choose Username</label>
-        <input type="text" id="username" placeholder="e.g. alice">
+            <label>Choose a Username</label>
+            <input type="text" id="username" placeholder="e.g. alice" autocomplete="off">
 
-        <button onclick="registerUser()">Sign & Register</button>
+            <button onclick="registerUser()">Sign & Register</button>
 
-        <div id="status" style="margin-top:15px; color:blue; display:none;"></div>
+            <div id="status" class="status"></div>
+        </div>
     </div>
 
     <script>
         // CONFIG
-        const REGISTRY_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"; // <--- PASTE REGISTRY ADDRESS
+        const REGISTRY_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"; // <--- PASTE YOUR REGISTRY ADDRESS
         const LOGIN_MESSAGE = "Sign this message to generate your Ghost Keys.\n\nIMPORTANT: Use the same wallet to login later.";
 
         const ec = new elliptic.ec('secp256k1');
@@ -83,59 +149,52 @@
             const name = document.getElementById("username").value;
             const status = document.getElementById("status");
 
-            if (!name) return alert("Enter a name");
+            if (!name) return alert("Please enter a username.");
 
-            status.style.display = "block";
-            status.innerText = "Connecting...";
+            showStatus("loading", "Requesting signature from wallet...");
 
             try {
-                if (!window.ethereum) throw new Error("No Metamask found");
+                if (!window.ethereum) throw new Error("MetaMask is not installed.");
 
                 const provider = new ethers.BrowserProvider(window.ethereum);
                 const signer = await provider.getSigner();
 
-                // 1. SIGNATURE DERIVATION
-                status.innerText = "Please sign the login message...";
+                // 1. Signature
                 const signature = await signer.signMessage(LOGIN_MESSAGE);
+                showStatus("loading", "Deriving keys and registering...");
 
-                status.innerText = "Deriving Keys...";
-
-                // 2. Derive Private Keys from Signature Hash
-                // Spend Key = Keccak(Signature)
+                // 2. Derive Keys
                 const spendPrivHex = ethers.keccak256(signature);
-
-                // Scan Key = Keccak(Signature + "scan") -> Just to make it different
                 const scanPrivHex = ethers.keccak256(ethers.solidityPacked(["bytes", "string"], [signature, "scan"]));
 
-                // 3. Generate Public Keys
                 const spendKey = ec.keyFromPrivate(spendPrivHex.replace("0x", ""), 'hex');
                 const scanKey = ec.keyFromPrivate(scanPrivHex.replace("0x", ""), 'hex');
 
                 const spendPub = "0x" + spendKey.getPublic(false, 'hex');
                 const scanPub = "0x" + scanKey.getPublic(false, 'hex');
-
-                // 4. Register on Contract
-                // We store a dummy value for the "encrypted private key" since we derive it now
                 const dummyEncryptedKey = ethers.ZeroHash;
 
-                status.innerText = "Registering on Blockchain...";
-
+                // 3. Register
                 const abi = ["function register(string, bytes, bytes, bytes32)"];
                 const contract = new ethers.Contract(REGISTRY_ADDRESS, abi, signer);
 
                 const tx = await contract.register(name, scanPub, spendPub, dummyEncryptedKey);
-
-                status.innerText = "Transaction sent: " + tx.hash;
+                showStatus("loading", "Transaction sent. Waiting for confirmation...");
                 await tx.wait();
 
-                status.innerText = "✅ Success! You are registered.";
-                status.style.color = "green";
+                showStatus("success", "✅ <b>Success!</b> You are registered as <b>" + name + "</b>.");
 
             } catch (err) {
                 console.error(err);
-                status.innerText = "Error: " + err.message;
-                status.style.color = "red";
+                showStatus("error", "Error: " + err.message);
             }
+        }
+
+        function showStatus(type, msg) {
+            const el = document.getElementById("status");
+            el.className = "status " + type;
+            el.style.display = "block";
+            el.innerHTML = msg;
         }
     </script>
 </body>

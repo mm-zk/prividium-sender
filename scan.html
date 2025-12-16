@@ -2,95 +2,172 @@
 <html lang="en">
 
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Alice's Dashboard</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
     <style>
+        :root {
+            --primary: #0ea5e9;
+            --bg: #f0f9ff;
+            --text: #1f2937;
+            --card: #ffffff;
+        }
+
         body {
-            font-family: 'Segoe UI', sans-serif;
-            padding: 40px;
-            max-width: 800px;
-            margin: auto;
-            background: #f0f4f8;
-            color: #333;
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
         }
 
         .card {
-            background: white;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-            margin-bottom: 20px;
+            background: var(--card);
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 4px 15px rgba(14, 165, 233, 0.1);
+            margin-bottom: 24px;
+        }
+
+        h2 {
+            margin-top: 0;
+            color: #0369a1;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            font-size: 0.875rem;
+            margin-bottom: 6px;
+            color: #374151;
         }
 
         input {
             width: 100%;
             padding: 12px;
-            border: 1px solid #ddd;
+            border: 1px solid #d1d5db;
             border-radius: 8px;
+            font-size: 1rem;
             box-sizing: border-box;
-            margin-top: 5px;
         }
 
-        button {
-            background: #3498db;
+        button.primary {
+            width: 100%;
+            background: var(--primary);
             color: white;
             border: none;
-            padding: 12px 20px;
-            border-radius: 6px;
+            padding: 14px;
+            border-radius: 8px;
+            font-weight: 600;
             cursor: pointer;
-            font-size: 1em;
-            width: 100%;
+            margin-top: 15px;
             transition: background 0.2s;
+        }
+
+        button.primary:hover {
+            background: #0284c7;
+        }
+
+        .fund-list {
             margin-top: 20px;
         }
 
-        button:hover {
-            background: #2980b9;
+        .fund-item {
+            background: white;
+            border: 1px solid #e0f2fe;
+            border-left: 4px solid #22c55e;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
         }
 
-        .fund-item {
-            background: #fff;
-            border-left: 5px solid #2ecc71;
-            padding: 15px;
-            margin-bottom: 10px;
-            border-radius: 4px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+        .fund-title {
+            font-weight: 700;
+            color: #15803d;
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .fund-meta {
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #64748b;
+            margin-bottom: 15px;
+            word-break: break-all;
         }
 
         .claim-btn {
-            background: #27ae60;
+            background: #22c55e;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .claim-btn:hover {
+            background: #16a34a;
+        }
+
+        .status {
             margin-top: 10px;
-            width: auto;
-            padding: 8px 15px;
+            font-size: 0.9rem;
+            color: #64748b;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 20px;
+            color: #94a3b8;
+            font-style: italic;
         }
     </style>
 </head>
 
 <body>
 
-    <h2>🕵️‍♀️ Private Dashboard</h2>
+    <div class="container">
+        <div class="card">
+            <h2>🕵️‍♀️ Private Dashboard</h2>
+            <p style="color:#64748b; font-size:0.95rem; margin-bottom: 20px;">
+                Enter your username and sign with your wallet to decrypt and claim your private transfers.
+            </p>
 
-    <div class="card">
-        <h3>1. Secure Login</h3>
-        <p style="color:#666">Enter your username and sign the message to regenerate your keys.</p>
+            <label>Username</label>
+            <input type="text" id="username" placeholder="e.g. alice">
 
-        <input type="text" id="username" placeholder="e.g. alice">
+            <button class="primary" onclick="loginAndScan()">🔑 Login & Scan Funds</button>
+            <div id="status" class="status"></div>
+        </div>
 
-        <button onclick="loginAndScan()">🔑 Login with MetaMask & Scan</button>
-        <div id="status" style="margin-top:10px;"></div>
-    </div>
-
-    <div id="resultsArea" style="display:none;">
-        <h3>2. Incoming Transfers</h3>
-        <div id="fundsList"></div>
+        <div id="resultsArea" style="display:none;">
+            <h3 style="color:#0369a1; margin-bottom: 15px;">Found Assets</h3>
+            <div id="fundsList" class="fund-list"></div>
+        </div>
     </div>
 
     <script>
         // CONFIG
-        const FACTORY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"; // <--- PASTE FACTORY
+        const REGISTRY_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"; // <--- PASTE REGISTRY
+        const FACTORY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";  // <--- PASTE FACTORY
         const RPC_URL = "http://127.0.0.1:8545";
         const LOGIN_MESSAGE = "Sign this message to generate your Ghost Keys.\n\nIMPORTANT: Use the same wallet to login later.";
+        const LOCAL_CHAIN_ID_HEX = "0x7A69"; // 31337
 
         const ec = new elliptic.ec('secp256k1');
         const BN = ec.genKeyPair().getPrivate().constructor;
@@ -100,21 +177,20 @@
             const username = document.getElementById("username").value;
             const status = document.getElementById("status");
             const fundsList = document.getElementById("fundsList");
+            const resultsArea = document.getElementById("resultsArea");
 
             if (!username) return alert("Enter username");
 
+            status.innerText = "Requesting signature...";
+
             try {
-                // 1. Connect & Sign
                 if (!window.ethereum) throw new Error("No MetaMask");
                 provider = new ethers.BrowserProvider(window.ethereum);
                 signer = await provider.getSigner();
 
-                status.innerText = "Please sign the login request...";
+                // 1. Sign & Derive
                 const signature = await signer.signMessage(LOGIN_MESSAGE);
-
-                // 2. RE-DERIVE KEYS (Deterministic)
-                // This recreates the exact private keys used at registration
-                status.innerText = "Regenerating Keys...";
+                status.innerText = "Scanning blockchain...";
 
                 const spendPrivHex = ethers.keccak256(signature);
                 const scanPrivHex = ethers.keccak256(ethers.solidityPacked(["bytes", "string"], [signature, "scan"]));
@@ -122,21 +198,18 @@
                 const spendKey = ec.keyFromPrivate(spendPrivHex.replace("0x", ""), 'hex');
                 const scanKey = ec.keyFromPrivate(scanPrivHex.replace("0x", ""), 'hex');
 
-                // 3. Scan Blockchain
-                status.innerText = "Scanning for funds...";
+                // 2. Query Events
                 const factoryAbi = ["event GhostDeployed(address indexed vault, address indexed owner, bytes ephemeralPublicKey)"];
                 const factory = new ethers.Contract(FACTORY_ADDRESS, factoryAbi, provider);
-
                 const events = await factory.queryFilter(factory.filters.GhostDeployed(), 0);
 
                 fundsList.innerHTML = "";
                 let foundCount = 0;
 
+                // 3. Scan Logic
                 for (let e of events) {
                     try {
                         const { vault, owner, ephemeralPublicKey } = e.args;
-
-                        // --- MATH: Check if this vault belongs to us ---
 
                         // S = a * R
                         const ephemeralKey = ec.keyFromPublic(ephemeralPublicKey.replace("0x", ""), 'hex');
@@ -145,7 +218,7 @@
                         const sharedHash = ethers.keccak256("0x" + sharedSecret);
                         const sharedHashBN = new BN(sharedHash.slice(2), 16);
 
-                        // Check: (Hash(S) * G) + B == Owner?
+                        // Owner Check
                         const offsetPoint = ec.g.mul(sharedHashBN);
                         const expectedOwnerPoint = offsetPoint.add(spendKey.getPublic());
                         const expectedOwnerHex = expectedOwnerPoint.encode('hex', false);
@@ -153,19 +226,16 @@
 
                         if (expectedOwnerAddr.toLowerCase() === owner.toLowerCase()) {
                             foundCount++;
-
-                            // Calculate Ghost Private Key for claiming
                             const ghostPrivBN = sharedHashBN.add(spendKey.getPrivate()).umod(ec.n);
                             const ghostPrivateKey = "0x" + ghostPrivBN.toString(16, 64);
-
                             renderFundItem(vault, owner, ghostPrivateKey);
                         }
                     } catch (err) { console.error(err); }
                 }
 
-                document.getElementById("resultsArea").style.display = "block";
+                resultsArea.style.display = "block";
                 status.innerText = "";
-                if (foundCount === 0) fundsList.innerHTML = "No funds found.";
+                if (foundCount === 0) fundsList.innerHTML = "<div class='empty-state'>No pending transfers found for <b>" + username + "</b>.</div>";
 
             } catch (err) {
                 console.error(err);
@@ -177,39 +247,44 @@
             const div = document.createElement("div");
             div.className = "fund-item";
             div.innerHTML = `
-                <div style="font-weight:bold; color:#2c3e50;">💰 Unclaimed Assets</div>
-                <div style="font-size:0.85em; color:#666;">Vault: ${vault}</div>
-                <button class="claim-btn" onclick="claimFunds('${vault}', '${ghostKey}')">Claim Funds</button>
+                <div class="fund-title">
+                    <span>💰 Unclaimed Assets</span>
+                    <button class="claim-btn" onclick="claimFunds('${vault}', '${ghostKey}')">Claim</button>
+                </div>
+                <div class="fund-meta">
+                    Vault: ${vault}<br>
+                    Ghost Owner: ${owner}
+                </div>
             `;
             document.getElementById("fundsList").appendChild(div);
         }
 
         async function claimFunds(vaultAddr, ghostPrivKey) {
             try {
+                // Ensure local chain
+                await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: LOCAL_CHAIN_ID_HEX }] });
+
                 const myAddress = await signer.getAddress();
                 const ghostWallet = new ethers.Wallet(ghostPrivKey);
                 const network = await provider.getNetwork();
 
-                // 1. Sign Sweep Authorization
                 const types = ["uint256", "address", "address", "address"];
                 const values = [network.chainId, vaultAddr, ethers.ZeroAddress, myAddress];
                 const messageHash = ethers.solidityPackedKeccak256(types, values);
 
                 const signature = await ghostWallet.signMessage(ethers.getBytes(messageHash));
 
-                // 2. Send Tx
                 const vaultAbi = ["function sweep(address, address, bytes)"];
                 const vault = new ethers.Contract(vaultAddr, vaultAbi, signer);
 
-                alert("Please confirm transaction in MetaMask...");
+                alert("Please confirm the sweep transaction in MetaMask...");
                 const tx = await vault.sweep(ethers.ZeroAddress, myAddress, signature);
 
                 alert("Sweeping... " + tx.hash);
                 await tx.wait();
-                alert("Funds swept successfully!");
+                alert("Success! Funds moved to " + myAddress);
 
-                // Refresh
-                loginAndScan();
+                loginAndScan(); // Refresh
 
             } catch (err) {
                 alert("Claim failed: " + err.message);
