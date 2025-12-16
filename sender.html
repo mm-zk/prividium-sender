@@ -55,11 +55,26 @@
             const amount = document.getElementById("amount").value;
 
             // 1. Fetch Registry
-            const registry = await fetch('registry.json').then(r => r.json());
-            const userKeys = registry[username];
-            if (!userKeys) return log("User not found!");
+            const REGISTRY_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"; // Same address as in register.html
+            const registryAbi = ["function getPublicKeys(string) view returns (bytes, bytes)"];
+            const registryContract = new ethers.Contract(REGISTRY_ADDRESS, registryAbi, provider);
+
+            try {
+                const [scanPub, spendPub] = await registryContract.getPublicKeys(username);
+
+                // Format keys for your existing logic
+                userKeys = {
+                    scanPublicKey: scanPub.replace("0x", ""), // Remove 0x for elliptic
+                    spendPublicKey: spendPub.replace("0x", "")
+                };
+            } catch (e) {
+                alert("User not found on-chain!");
+                return;
+            }
 
             log(`Found keys for ${username}... generating Stealth Address.`);
+            const BN = ec.genKeyPair().getPrivate().constructor;
+
 
             // 2. CRYPTO MAGIC (Dual-Key Stealth Address)
 
@@ -74,7 +89,7 @@
 
             // C. Hash Shared Secret (Hash(S))
             const sharedHash = ethers.keccak256("0x" + sharedSecret);
-            const sharedHashBN = new ethers.BN(sharedHash.slice(2), 16); // Remove '0x'
+            const sharedHashBN = new BN(sharedHash.slice(2), 16); // Remove '0x'
 
             // D. Calculate Ghost Owner (Pub = Hash(S)*G + B)
             const aliceSpendKey = ec.keyFromPublic(userKeys.spendPublicKey, 'hex');

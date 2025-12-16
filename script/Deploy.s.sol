@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import "../src/GhostSystem.sol";
+import "../src/Registry.sol";
 
 contract DeployScript is Script {
     function run() external {
@@ -21,6 +22,17 @@ contract DeployScript is Script {
         // 3. Deploy Factory
         GhostFactory factory = new GhostFactory(address(bridge));
         console.log("GhostFactory deployed at:", address(factory));
+
+        // 4. Deploy Registry
+        Registry registry = new Registry();
+        console.log("Registry deployed at:", address(registry));
+
+        registry.register(
+            "alice",
+            hex"0463f43e6f15321d0fb948b671854e2a5e22846cbaf1b470cd4a48fdc58c16953d73d1daa878b2e8b8ea575cfab361179f7ad70e3afe3a6d324417cd989fabd604",
+            hex"046105145a889d8d9007523c0583191aacf7f1dc79de54f4554d5172c23aea864c2409d6056430e617c84d34ff8c1c770bdfdb8c4e118fb0fa776f8b3ccb6e1154",
+            hex"bb9362aac533bf644933449cd9c0685ec275e1537075ed98e14da4ebfab557d9"
+        );
 
         vm.stopBroadcast();
     }
